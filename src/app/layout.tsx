@@ -7,10 +7,16 @@ export const metadata: Metadata = {
   description: 'ZED é seu assistente virtual pessoal com IA avançada. Organize sua vida, rotina, finanças e agenda com inteligência artificial.',
   keywords: ['assistente virtual', 'IA', 'inteligência artificial', 'produtividade', 'organização pessoal'],
   authors: [{ name: 'ZED Team' }],
+  icons: {
+    icon: '/logo.png',
+    shortcut: '/logo.png',
+    apple: '/logo.png',
+  },
   openGraph: {
     title: 'ZED - Seu Assistente Virtual Inteligente',
     description: 'Organize sua vida com inteligência artificial',
     type: 'website',
+    images: ['/logo.png'],
   },
 }
 
@@ -45,4 +51,5 @@ export default function RootLayout({
     </html>
   )
 }
+
 

@@ -7,12 +7,34 @@ import type { User } from '@supabase/supabase-js';
 import toast from 'react-hot-toast';
 
 /**
+ * Traduz mensagens de erro do Supabase para português
+ */
+const translateError = (error: any): string => {
+  const message = error?.message || error?.error_description || '';
+  
+  const translations: Record<string, string> = {
+    'Invalid login credentials': 'Email ou senha incorretos',
+    'Email not confirmed': 'Por favor, confirme seu email antes de fazer login',
+    'User already registered': 'Este email já está cadastrado',
+    'Password should be at least 6 characters': 'A senha deve ter pelo menos 6 caracteres',
+    'Unable to validate email address: invalid format': 'Formato de email inválido',
+    'Signup requires a valid password': 'Senha inválida',
+    'User not found': 'Usuário não encontrado',
+    'Email rate limit exceeded': 'Muitas tentativas. Aguarde alguns minutos',
+    'For security purposes, you can only request this once every 60 seconds': 'Aguarde 60 segundos antes de tentar novamente',
+  };
+
+  return translations[message] || 'Ocorreu um erro. Tente novamente.';
+};
+
+/**
  * Hook para gerenciar autenticação com Supabase
  */
 export const useSupabaseAuth = () => {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [pendingConfirmation, setPendingConfirmation] = useState(false);
   const supabase = createClient();
 
   useEffect(() => {
@@ -41,58 +63,50 @@ export const useSupabaseAuth = () => {
       setUser(null);
       toast.success('Logout realizado com sucesso!');
       router.push('/login');
-    } catch (error) {
-      console.error('Erro ao fazer logout:', error);
+    } catch {
       toast.error('Erro ao fazer logout');
     }
   }, [router, supabase.auth]);
 
   const login = useCallback(async (email: string, password: string) => {
     try {
-      console.log('[Auth] Iniciando login para:', email);
-      
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
       
-      if (error) throw error;
+      if (error) {
+        // Tratar erro sem logar no console
+        const friendlyMessage = translateError(error);
+        toast.error(friendlyMessage);
+        throw new Error(friendlyMessage);
+      }
       
-      console.log('[Auth] Login bem sucedido, user_id:', data.user?.id);
       setUser(data.user);
       
       // Verificar se é admin para redirecionar corretamente
       if (data.user) {
-        console.log('[Auth] Verificando se é admin...');
-        
-        const { data: adminUser, error: adminError } = await supabase
+        const { data: adminUser } = await supabase
           .from('admin_users')
           .select('id, role')
           .eq('user_id', data.user.id)
-          .maybeSingle(); // maybeSingle não lança erro se não encontrar
-        
-        console.log('[Auth] Resultado da query admin:', { adminUser, adminError });
+          .maybeSingle();
         
         toast.success('Login realizado com sucesso!');
         
         if (adminUser) {
-          // É admin - redirecionar para painel admin
-          console.log('[Auth] É admin! Redirecionando para /admin');
           window.location.href = '/admin';
         } else {
-          // Usuário normal - redirecionar para dashboard
-          console.log('[Auth] Não é admin. Redirecionando para /dashboard');
           window.location.href = '/dashboard';
         }
       }
     } catch (error: any) {
-      console.error('[Auth] Erro ao fazer login:', error);
-      toast.error(error.message || 'Erro ao fazer login');
+      // Não logar no console - erro já tratado acima
       throw error;
     }
   }, [supabase]);
 
-  const signup = useCallback(async (email: string, password: string, name: string) => {
+  const signup = useCallback(async (email: string, password: string, name: string): Promise<{ needsConfirmation: boolean }> => {
     try {
       const { data, error } = await supabase.auth.signUp({
         email,
@@ -101,37 +115,66 @@ export const useSupabaseAuth = () => {
           data: {
             name,
           },
+          emailRedirectTo: `${window.location.origin}/login`,
         },
       });
       
-      if (error) throw error;
-
-      // Criar perfil do usuário
-      if (data.user) {
-        await supabase.from('profiles').insert({
-          id: data.user.id,
-          email: data.user.email,
-          name,
-        });
+      if (error) {
+        const friendlyMessage = translateError(error);
+        toast.error(friendlyMessage);
+        throw new Error(friendlyMessage);
       }
-      
+
+      // Verificar se precisa confirmar email
+      // Se o usuário foi criado mas não está confirmado, data.user existe mas session é null
+      if (data.user && !data.session) {
+        setPendingConfirmation(true);
+        return { needsConfirmation: true };
+      }
+
+      // Se já confirmou (desenvolvimento ou config sem confirmação)
       setUser(data.user);
       toast.success('Conta criada com sucesso!');
-      router.push('/dashboard');
+      window.location.href = '/dashboard';
+      return { needsConfirmation: false };
     } catch (error: any) {
-      console.error('Erro ao fazer signup:', error);
-      toast.error(error.message || 'Erro ao criar conta');
       throw error;
     }
-  }, [router, supabase]);
+  }, [supabase]);
+
+  const resendConfirmationEmail = useCallback(async (email: string) => {
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/login`,
+        },
+      });
+      
+      if (error) {
+        const friendlyMessage = translateError(error);
+        toast.error(friendlyMessage);
+        return false;
+      }
+      
+      toast.success('Email de confirmação reenviado!');
+      return true;
+    } catch {
+      toast.error('Erro ao reenviar email');
+      return false;
+    }
+  }, [supabase]);
 
   return {
     logout,
     login,
     signup,
+    resendConfirmationEmail,
     user,
     isLoading,
     isAuthenticated: !!user,
+    pendingConfirmation,
   };
 };
 

@@ -3,11 +3,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Bell, X, ChevronLeft, Menu } from 'lucide-react';
+import { Search, Bell, X, ChevronLeft, Menu, Camera, LogOut, User, Settings } from 'lucide-react';
 import { HeaderProps, SearchOption } from '@/shared/types';
 import { cn, focusRings } from '@/shared/lib';
 import { Button, Input, Avatar, Typography } from '@/shared/components/atoms';
 import { Card, CardContent } from '@/shared/components/molecules';
+import { useUserProfile, useSupabaseAuth, useNotifications } from '@/shared/hooks';
 
 // Definição de breakpoints ultra responsivos
 const BREAKPOINTS = {
@@ -209,21 +210,25 @@ const getResponsiveAnimations = (screenSize: string, isSmallMobile: boolean) => 
 export const Header = ({
   toggleSidebar,
   isSidebarOpen,
-  user,
   title = 'Dashboard',
 }: HeaderProps) => {
   const router = useRouter();
   const { screenSize, isMobile, isSmallMobile, isTouch } = useResponsiveScreen();
+  const { profile, isUploading, uploadAvatar } = useUserProfile();
+  const { logout } = useSupabaseAuth();
+  const { notifications, unreadCount, markAllAsRead } = useNotifications();
   
   const config = getResponsiveConfig(screenSize, isSmallMobile, isTouch);
   const animations = getResponsiveAnimations(screenSize, isSmallMobile);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [notificationCount, setNotificationCount] = useState(3);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const searchOptions: SearchOption[] = [
     { label: 'Dashboard', link: '/dashboard' },
@@ -232,12 +237,6 @@ export const Header = ({
     { label: 'Financeiro', link: '/dashboard/finances' },
     { label: 'Agenda', link: '/dashboard/schedule' },
     { label: 'Configurações', link: '/dashboard/settings' },
-  ];
-
-  const notifications = [
-    { id: 1, title: 'Nova mensagem', description: 'Você recebeu uma nova mensagem do Zed', time: 'Agora' },
-    { id: 2, title: 'Lembrete', description: 'Reunião em 30 minutos', time: '30min' },
-    { id: 3, title: 'Meta atingida', description: 'Parabéns! Você atingiu sua meta mensal', time: '2h atrás' },
   ];
 
   const filteredOptions = searchOptions.filter((option) =>
@@ -253,18 +252,42 @@ export const Header = ({
       if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
         setShowNotifications(false);
       }
+      if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
+        setShowProfileMenu(false);
+      }
     }
 
-    if (searchOpen || showNotifications) {
+    if (searchOpen || showNotifications || showProfileMenu) {
       document.addEventListener('mousedown', handleClickOutside);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [searchOpen, showNotifications]);
+  }, [searchOpen, showNotifications, showProfileMenu]);
 
   const handleNotificationClick = () => {
     setShowNotifications(!showNotifications);
+  };
+
+  const handleAvatarClick = () => {
+    setShowProfileMenu(!showProfileMenu);
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      await uploadAvatar(file);
+      setShowProfileMenu(false);
+    }
+    // Limpar input para permitir selecionar o mesmo arquivo novamente
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleLogout = async () => {
+    setShowProfileMenu(false);
+    await logout();
   };
 
   return (
@@ -463,7 +486,7 @@ export const Header = ({
               aria-label="Ver notificações"
           >
             <Bell size={config.iconSize} className="drop-shadow-lg" />
-            {notificationCount > 0 && (
+            {unreadCount > 0 && (
               <motion.span
                 className={cn(
                   'absolute flex items-center justify-center',
@@ -476,7 +499,7 @@ export const Header = ({
                 animate={animations.badge.animate}
                 transition={animations.badge.transition}
               >
-                {notificationCount}
+                {unreadCount > 9 ? '9+' : unreadCount}
               </motion.span>
             )}
           </Button>
@@ -508,25 +531,41 @@ export const Header = ({
                           className={cn(
                             'cursor-pointer border-b', config.notificationPadding, 'border-[#424959]/30',
                             'hover:bg-gradient-to-r hover:from-[#424959]/30 hover:to-[#1e293b]/20',
-                            'transition-all duration-150'
+                            'transition-all duration-150',
+                            !notification.read && 'bg-blue-500/5'
                           )}
                           initial={{ opacity: 0, x: -10 }}
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ duration: 0.08, delay: index * 0.02 }}
+                          onClick={() => {
+                            if (notification.link) {
+                              router.push(notification.link);
+                              setShowNotifications(false);
+                            }
+                          }}
                         >
-                          <div className="flex justify-between">
+                          <div className="flex justify-between items-start">
                             <Typography variant="small" color="white" className={cn('font-medium', isSmallMobile ? 'text-xs' : '')}>
                               {notification.title}
                             </Typography>
-                            <Typography variant="caption" className={cn('text-[#9CA3AF]', isSmallMobile ? 'text-[10px]' : '')}>
+                            <Typography variant="caption" className={cn(
+                              isSmallMobile ? 'text-[10px]' : '',
+                              notification.priority === 'high' ? 'text-red-400' : 'text-[#9CA3AF]'
+                            )}>
                               {notification.time}
                             </Typography>
                           </div>
-                          <Typography variant="caption" className={cn('mt-1 text-[#9CA3AF]/90', isSmallMobile ? 'text-[10px]' : '')}>
+                          <Typography variant="caption" className={cn('mt-1 text-[#9CA3AF]/90 line-clamp-1', isSmallMobile ? 'text-[10px]' : '')}>
                             {notification.description}
                           </Typography>
                         </motion.div>
-                      )) : null}
+                      )) : (
+                        <div className={cn('text-center py-6', config.notificationPadding)}>
+                          <Typography variant="caption" className="text-[#9CA3AF]">
+                            Nenhuma notificação no momento 🎉
+                          </Typography>
+                        </div>
+                      )}
                     </div>
                     <div className={cn(
                         'text-center', isSmallMobile ? 'p-1.5' : 'p-2',
@@ -538,7 +577,7 @@ export const Header = ({
                           'text-blue-400 hover:text-blue-300 transition-all duration-150',
                           isSmallMobile ? 'text-xs' : ''
                         )}
-                        onClick={() => { setShowNotifications(false); setNotificationCount(0); }}
+                        onClick={() => { setShowNotifications(false); markAllAsRead(); }}
                       >
                         Marcar todas como lidas
                       </Button>
@@ -550,25 +589,152 @@ export const Header = ({
           </AnimatePresence>
         </div>
 
-        {/* Avatar */}
-        <div className="relative">
+        {/* Avatar com Menu de Perfil */}
+        <div className="relative" ref={profileRef}>
+          {/* Input oculto para upload de foto */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            className="hidden"
+          />
+          
           <div
+            onClick={handleAvatarClick}
             className={cn(
               'cursor-pointer border-2 rounded-full', config.avatarSize, config.touchArea,
               'border-blue-400/20 bg-gradient-to-br from-[#0A101F]/90 to-[#111827]/90 p-0.5',
               'hover:border-blue-400/40',
               'transition-all duration-150 hover:shadow-lg hover:shadow-blue-500/20',
-              'hover:scale-105'
+              'hover:scale-105',
+              isUploading && 'opacity-50 pointer-events-none'
             )}
           >
-            <div className="h-full w-full rounded-full bg-gradient-to-br from-[#1e293b]/90 to-[#111827]/90 p-0.5">
+            <div className="h-full w-full rounded-full bg-gradient-to-br from-[#1e293b]/90 to-[#111827]/90 p-0.5 relative">
               <Avatar
-                src={user?.avatar}
-                fallback={user?.name?.charAt(0) || 'U'}
+                src={profile?.avatar_url || undefined}
+                fallback={profile?.name?.charAt(0) || profile?.email?.charAt(0) || 'U'}
                 className="object-cover h-full w-full"
               />
+              {isUploading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full">
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Menu de Perfil */}
+          <AnimatePresence>
+            {showProfileMenu && (
+              <motion.div
+                initial={animations.dropdown.initial}
+                animate={animations.dropdown.animate}
+                exit={animations.dropdown.exit}
+                transition={animations.dropdown.transition}
+                className={cn('absolute top-full right-0 z-50 mt-2', isSmallMobile ? 'w-56' : 'w-64')}
+              >
+                <Card className="bg-gradient-to-b from-[#1e293b]/98 via-[#424959]/95 to-[#111827]/98 backdrop-blur-xl border-blue-500/20 shadow-xl shadow-blue-500/10 overflow-hidden">
+                  {/* Cabeçalho do perfil */}
+                  <div className={cn(
+                    'border-b border-blue-500/20 p-4',
+                    'bg-gradient-to-r from-blue-500/10 via-purple-500/5 to-blue-500/10'
+                  )}>
+                    <div className="flex items-center gap-3">
+                      <div className="relative">
+                        <Avatar
+                          src={profile?.avatar_url || undefined}
+                          fallback={profile?.name?.charAt(0) || 'U'}
+                          size="lg"
+                          className="border-2 border-blue-400/30"
+                        />
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            fileInputRef.current?.click();
+                          }}
+                          className={cn(
+                            'absolute -bottom-1 -right-1 p-1.5 rounded-full',
+                            'bg-blue-500 hover:bg-blue-400 text-white',
+                            'transition-all duration-150',
+                            'shadow-lg shadow-blue-500/30'
+                          )}
+                        >
+                          <Camera size={12} />
+                        </button>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <Typography variant="small" color="white" className="font-medium truncate">
+                          {profile?.name || 'Usuário'}
+                        </Typography>
+                        <Typography variant="caption" className="text-[#9CA3AF] truncate block">
+                          {profile?.email}
+                        </Typography>
+                      </div>
+                    </div>
+                  </div>
+
+                  <CardContent className="p-0">
+                    {/* Opções do menu */}
+                    <div className="py-1">
+                      <button
+                        onClick={() => {
+                          fileInputRef.current?.click();
+                        }}
+                        className={cn(
+                          'w-full flex items-center gap-3 px-4 py-2.5 text-left',
+                          'text-[#9CA3AF] hover:text-white',
+                          'hover:bg-gradient-to-r hover:from-[#424959]/40 hover:to-[#1e293b]/30',
+                          'transition-all duration-150'
+                        )}
+                      >
+                        <Camera size={18} className="text-blue-400" />
+                        <span className={cn(isSmallMobile ? 'text-xs' : 'text-sm')}>
+                          {profile?.avatar_url ? 'Alterar foto' : 'Adicionar foto'}
+                        </span>
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setShowProfileMenu(false);
+                          router.push('/dashboard/settings');
+                        }}
+                        className={cn(
+                          'w-full flex items-center gap-3 px-4 py-2.5 text-left',
+                          'text-[#9CA3AF] hover:text-white',
+                          'hover:bg-gradient-to-r hover:from-[#424959]/40 hover:to-[#1e293b]/30',
+                          'transition-all duration-150'
+                        )}
+                      >
+                        <Settings size={18} className="text-purple-400" />
+                        <span className={cn(isSmallMobile ? 'text-xs' : 'text-sm')}>Configurações</span>
+                      </button>
+                    </div>
+
+                    {/* Separador */}
+                    <div className="border-t border-[#424959]/30" />
+
+                    {/* Logout */}
+                    <div className="py-1">
+                      <button
+                        onClick={handleLogout}
+                        className={cn(
+                          'w-full flex items-center gap-3 px-4 py-2.5 text-left',
+                          'text-red-400 hover:text-red-300',
+                          'hover:bg-gradient-to-r hover:from-red-500/10 hover:to-red-600/5',
+                          'transition-all duration-150'
+                        )}
+                      >
+                        <LogOut size={18} />
+                        <span className={cn(isSmallMobile ? 'text-xs' : 'text-sm')}>Sair da conta</span>
+                      </button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
     </motion.header>

@@ -479,3 +479,4 @@ const StatCard: React.FC<StatCardProps> = ({ icon: Icon, label, value, color }) 
   </motion.div>
 )
 
+

@@ -246,3 +246,4 @@ CREATE TRIGGER update_journal_updated_at
   BEFORE UPDATE ON journal_entries
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
 
+

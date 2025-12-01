@@ -31,6 +31,10 @@ export default function DashboardLayout({
     if (pathname.includes('/routine')) return 'Rotina'
     if (pathname.includes('/finances')) return 'Financeiro'
     if (pathname.includes('/schedule')) return 'Agenda'
+    if (pathname.includes('/goals')) return 'Metas'
+    if (pathname.includes('/focus')) return 'Timer de Foco'
+    if (pathname.includes('/checklists')) return 'Checklists'
+    if (pathname.includes('/journal')) return 'Diário'
     if (pathname.includes('/settings')) return 'Configurações'
     return 'Dashboard'
   }
@@ -48,11 +52,7 @@ export default function DashboardLayout({
         {/* ====== MOBILE LAYOUT (< 768px) - APENAS CELULARES ====== */}
         <div className="md:hidden min-h-screen flex flex-col">
           {/* Header Mobile - logo centralizada e ações */}
-          <MobileHeader
-            user={{
-              name: 'Usuário',
-            }}
-          />
+          <MobileHeader />
 
           {/* Conteúdo Mobile - responsivo */}
           <main className="flex-1 px-3 sm:px-4 py-3 sm:py-4 pb-20 sm:pb-24">
@@ -90,10 +90,6 @@ export default function DashboardLayout({
                 toggleSidebar={toggleSidebar}
                 isSidebarOpen={sidebarOpen}
                 title={getPageTitle()}
-                user={{
-                  name: 'Usuário',
-                  email: 'usuario@exemplo.com',
-                }}
               />
 
               {/* Page Content */}

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, Part } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
 
 // Inicializar o cliente Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
-// Modelo Gemini gratuito (atualizado para 2.0)
+// Modelo Gemini com suporte a visão
 const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
 // Cliente Supabase com service role
@@ -23,13 +23,38 @@ const ZED_SYSTEM_PROMPT = `Você é o ZED, um assistente virtual pessoal intelig
 - Você é direto e objetivo, mas também empático
 
 📋 SUAS CAPACIDADES REAIS (você PODE executar essas ações):
+- CONSULTAR DADOS: Você TEM ACESSO aos dados do usuário (tarefas, eventos, gastos, metas)
 - CRIAR TAREFAS: Quando o usuário pedir para lembrar algo ou criar tarefa
 - CRIAR EVENTOS: Quando o usuário pedir para agendar algo
 - REGISTRAR GASTOS: Quando o usuário mencionar que gastou dinheiro
 - CRIAR METAS: Quando o usuário quiser definir objetivos
+- ANALISAR IMAGENS: Quando o usuário enviar fotos de recibos, notas fiscais, comprovantes
+- EXTRAIR DADOS: Identificar valores, datas, estabelecimentos de documentos
 
-⚠️ IMPORTANTE - FORMATO DE RESPOSTA:
-Quando você identificar que o usuário quer criar algo, você DEVE incluir no final da sua resposta um bloco JSON especial no formato:
+⚠️ IMPORTANTE - DADOS DO USUÁRIO:
+Você receberá dados atualizados do usuário no início de cada conversa com [USER_CONTEXT].
+Use esses dados para responder perguntas como "quais são minhas tarefas", "quanto gastei", etc.
+Se os dados mostrarem listas vazias, informe que não há registros no momento.
+
+⚠️⚠️⚠️ REGRA CRÍTICA - CONFIRMAÇÃO OBRIGATÓRIA ⚠️⚠️⚠️
+NUNCA crie ações automaticamente! Você DEVE SEMPRE:
+1. PRIMEIRO: Entender o que o usuário disse/enviou
+2. SEGUNDO: Resumir os dados que você identificou
+3. TERCEIRO: PERGUNTAR se o usuário quer que você registre
+4. QUARTO: Só incluir o bloco [ACTION] quando o usuário CONFIRMAR explicitamente
+
+Palavras de confirmação aceitas: "sim", "pode", "confirma", "isso", "exato", "ok", "registra", "salva", "cria", "faz isso", "pode fazer", "tá certo", "correto"
+
+🖼️ ANÁLISE DE IMAGENS/RECIBOS:
+Quando o usuário enviar uma imagem de recibo, nota fiscal ou comprovante:
+1. Analise a imagem cuidadosamente
+2. Extraia: valor total, estabelecimento/loja, data, itens (se visíveis)
+3. Categorize automaticamente (Alimentação, Transporte, Saúde, Lazer, etc.)
+4. PERGUNTE: "Quer que eu registre essa despesa de R$ X,XX em [categoria]?"
+5. Só crie a ação após confirmação!
+
+⚠️ FORMATO DE RESPOSTA PARA AÇÕES:
+SOMENTE após o usuário confirmar, inclua o bloco JSON:
 
 [ACTION]{"action":"tipo_acao","data":{...dados...}}[/ACTION]
 
@@ -40,29 +65,49 @@ TIPOS DE AÇÃO:
 2. create_event - Para eventos/compromissos
    Dados: title, description, start_time (ISO string), end_time (ISO string), location, all_day (boolean)
 
-3. create_expense - Para gastos
-   Dados: title, amount (número positivo), category (Alimentação/Transporte/Moradia/Lazer/Saúde/Educação/Outros), date (YYYY-MM-DD)
+3. create_expense - Para gastos/despesas
+   Dados: title, amount (número positivo), category (Alimentação/Transporte/Moradia/Lazer/Saúde/Educação/Outros), date (YYYY-MM-DD), payment_method (opcional), notes (opcional), receipt_url (URL da imagem se houver)
 
-4. create_goal - Para metas
+4. create_income - Para receitas/entradas
+   Dados: title, amount (número positivo), category, date (YYYY-MM-DD)
+
+5. create_goal - Para metas
    Dados: title, description, area (Saúde/Financeiro/Estudos/Trabalho/Pessoal/Relacionamentos/Geral), timeframe (short/medium/long), deadline (YYYY-MM-DD)
 
-EXEMPLOS:
-- Usuário: "Lembre-me de pagar a conta de luz amanhã"
-  Resposta: "Claro! ✅ Criei um lembrete para você pagar a conta de luz amanhã. Vou te notificar na hora certa!
-  [ACTION]{"action":"create_task","data":{"title":"Pagar conta de luz","due_date":"2024-12-01","priority":"medium","category":"Casa/Família"}}[/ACTION]"
+EXEMPLOS CORRETOS (com confirmação):
 
-- Usuário: "Agenda uma reunião com o João na segunda às 14h"
-  Resposta: "Perfeito! 📅 Agendei sua reunião com o João para segunda-feira às 14:00.
-  [ACTION]{"action":"create_event","data":{"title":"Reunião com João","start_time":"2024-12-02T14:00:00","location":""}}[/ACTION]"
-
+📌 EXEMPLO 1 - Gasto (SEM confirmação ainda):
 - Usuário: "Gastei 50 reais no almoço"
-  Resposta: "Registrado! 💰 Adicionei R$ 50,00 em Alimentação no seu controle financeiro.
+- Resposta: "Entendi! 📝 Você gastou R$ 50,00 com almoço. Quer que eu registre essa despesa na categoria Alimentação?"
+
+📌 EXEMPLO 1 - Gasto (COM confirmação):
+- Usuário: "Sim, pode registrar"
+- Resposta: "Pronto! ✅ Registrei R$ 50,00 em Alimentação.
   [ACTION]{"action":"create_expense","data":{"title":"Almoço","amount":50,"category":"Alimentação"}}[/ACTION]"
+
+📌 EXEMPLO 2 - Tarefa (SEM confirmação ainda):
+- Usuário: "Preciso pagar a conta de luz amanhã"
+- Resposta: "Anotei! 📋 Você precisa pagar a conta de luz amanhã. Quer que eu crie um lembrete para isso?"
+
+📌 EXEMPLO 2 - Tarefa (COM confirmação):
+- Usuário: "Isso, cria"
+- Resposta: "Feito! ✅ Criei o lembrete para pagar a conta de luz amanhã.
+  [ACTION]{"action":"create_task","data":{"title":"Pagar conta de luz","due_date":"${new Date(Date.now() + 86400000).toISOString().split('T')[0]}","priority":"medium","category":"Casa/Família"}}[/ACTION]"
+
+📌 EXEMPLO 3 - Recibo (SEM confirmação ainda):
+- Usuário: [envia foto de recibo mostrando R$ 127,45 do Supermercado]
+- Resposta: "📷 Analisei o recibo! Vi os seguintes dados:
+  • Estabelecimento: Supermercado Extra
+  • Valor: R$ 127,45
+  • Categoria sugerida: Alimentação
+  
+  Quer que eu registre essa despesa?"
 
 REGRAS:
 - Sempre responda em português brasileiro
-- Seja natural na conversa, o bloco [ACTION] deve aparecer apenas quando realmente for criar algo
-- Se o usuário não estiver pedindo para criar nada, responda normalmente sem o bloco [ACTION]
+- NUNCA inclua [ACTION] sem confirmação prévia do usuário
+- Se o usuário disser algo como "não", "cancela", "deixa", NÃO crie a ação
+- Guarde os dados mencionados para quando o usuário confirmar
 - Use a data de hoje como referência: ${new Date().toISOString().split('T')[0]}`;
 
 interface ChatMessage {
@@ -75,8 +120,34 @@ interface ActionData {
   data: any;
 }
 
+interface MediaContent {
+  type: 'image' | 'video' | 'audio';
+  url: string;
+  mimeType?: string;
+  base64?: string; // Para áudio enviado diretamente
+}
+
+// Função para baixar áudio e converter para base64
+async function fetchAudioAsBase64(url: string): Promise<{ base64: string; mimeType: string } | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch audio: ${response.statusText}`);
+    }
+    
+    const contentType = response.headers.get('content-type') || 'audio/webm';
+    const arrayBuffer = await response.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    
+    return { base64, mimeType: contentType };
+  } catch (error) {
+    console.error('[Chat] Erro ao baixar áudio:', error);
+    return null;
+  }
+}
+
 // Função para extrair e executar ação
-async function extractAndExecuteAction(text: string, userId: string): Promise<{ cleanText: string; actionResult?: any }> {
+async function extractAndExecuteAction(text: string, userId: string, mediaUrl?: string): Promise<{ cleanText: string; actionResult?: any }> {
   const actionMatch = text.match(/\[ACTION\](.*?)\[\/ACTION\]/s);
   
   if (!actionMatch) {
@@ -89,6 +160,11 @@ async function extractAndExecuteAction(text: string, userId: string): Promise<{ 
     const actionData: ActionData = JSON.parse(actionMatch[1]);
     console.log('[Chat] Ação detectada:', actionData);
 
+    // Adicionar URL da mídia se houver
+    if (mediaUrl && actionData.data) {
+      actionData.data.receipt_url = mediaUrl;
+    }
+
     let result;
     
     switch (actionData.action) {
@@ -100,6 +176,9 @@ async function extractAndExecuteAction(text: string, userId: string): Promise<{ 
         break;
       case 'create_expense':
         result = await createExpense(userId, actionData.data);
+        break;
+      case 'create_income':
+        result = await createIncome(userId, actionData.data);
         break;
       case 'create_goal':
         result = await createGoal(userId, actionData.data);
@@ -173,6 +252,9 @@ async function createExpense(userId: string, data: any) {
       category: data.category || 'Outros',
       type: 'expense',
       date: data.date || new Date().toISOString().split('T')[0],
+      payment_method: data.payment_method || null,
+      receipt_url: data.receipt_url || null,
+      notes: data.notes || null,
     })
     .select()
     .single();
@@ -183,6 +265,28 @@ async function createExpense(userId: string, data: any) {
   }
   console.log('[Chat] Despesa criada:', transaction);
   return { type: 'expense', data: transaction };
+}
+
+async function createIncome(userId: string, data: any) {
+  const { data: transaction, error } = await supabase
+    .from('transactions')
+    .insert({
+      user_id: userId,
+      title: data.title,
+      amount: Math.abs(data.amount),
+      category: data.category || 'Outros',
+      type: 'income',
+      date: data.date || new Date().toISOString().split('T')[0],
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[Chat] Erro ao criar receita:', error);
+    throw error;
+  }
+  console.log('[Chat] Receita criada:', transaction);
+  return { type: 'income', data: transaction };
 }
 
 async function createGoal(userId: string, data: any) {
@@ -209,16 +313,411 @@ async function createGoal(userId: string, data: any) {
   return { type: 'goal', data: goal };
 }
 
+// ============================================
+// FUNÇÕES DE CONSULTA DE DADOS DO USUÁRIO
+// ============================================
+
+async function getUserTasks(userId: string) {
+  const today = new Date().toISOString().split('T')[0];
+  
+  const { data: tasks, error } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('completed', false)
+    .order('due_date', { ascending: true, nullsFirst: false })
+    .limit(20);
+
+  if (error) {
+    console.error('[Chat] Erro ao buscar tarefas:', error);
+    return [];
+  }
+
+  return tasks || [];
+}
+
+async function getUserTodayTasks(userId: string) {
+  const today = new Date().toISOString().split('T')[0];
+  
+  const { data: tasks, error } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('due_date', today)
+    .order('due_time', { ascending: true, nullsFirst: false });
+
+  if (error) {
+    console.error('[Chat] Erro ao buscar tarefas de hoje:', error);
+    return [];
+  }
+
+  return tasks || [];
+}
+
+async function getUserEvents(userId: string) {
+  const now = new Date().toISOString();
+  
+  const { data: events, error } = await supabase
+    .from('events')
+    .select('*')
+    .eq('user_id', userId)
+    .gte('start_time', now)
+    .order('start_time', { ascending: true })
+    .limit(10);
+
+  if (error) {
+    console.error('[Chat] Erro ao buscar eventos:', error);
+    return [];
+  }
+
+  return events || [];
+}
+
+async function getUserTodayEvents(userId: string) {
+  const today = new Date();
+  const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).toISOString();
+  const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1).toISOString();
+  
+  const { data: events, error } = await supabase
+    .from('events')
+    .select('*')
+    .eq('user_id', userId)
+    .gte('start_time', startOfDay)
+    .lt('start_time', endOfDay)
+    .order('start_time', { ascending: true });
+
+  if (error) {
+    console.error('[Chat] Erro ao buscar eventos de hoje:', error);
+    return [];
+  }
+
+  return events || [];
+}
+
+async function getUserTransactions(userId: string, limit = 20) {
+  const { data: transactions, error } = await supabase
+    .from('transactions')
+    .select('*')
+    .eq('user_id', userId)
+    .order('date', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error('[Chat] Erro ao buscar transações:', error);
+    return [];
+  }
+
+  return transactions || [];
+}
+
+async function getUserMonthlyTransactions(userId: string) {
+  const now = new Date();
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+  
+  const { data: transactions, error } = await supabase
+    .from('transactions')
+    .select('*')
+    .eq('user_id', userId)
+    .gte('date', firstDay)
+    .lte('date', lastDay)
+    .order('date', { ascending: false });
+
+  if (error) {
+    console.error('[Chat] Erro ao buscar transações do mês:', error);
+    return [];
+  }
+
+  return transactions || [];
+}
+
+async function getUserGoals(userId: string) {
+  const { data: goals, error } = await supabase
+    .from('goals')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('completed', false)
+    .order('deadline', { ascending: true, nullsFirst: false })
+    .limit(10);
+
+  if (error) {
+    console.error('[Chat] Erro ao buscar metas:', error);
+    return [];
+  }
+
+  return goals || [];
+}
+
+// Função para buscar contexto do usuário
+async function getUserContext(userId: string) {
+  const [todayTasks, allTasks, todayEvents, allEvents, monthTransactions, goals] = await Promise.all([
+    getUserTodayTasks(userId),
+    getUserTasks(userId),
+    getUserTodayEvents(userId),
+    getUserEvents(userId),
+    getUserMonthlyTransactions(userId),
+    getUserGoals(userId),
+  ]);
+
+  // Calcular resumo financeiro
+  const expenses = monthTransactions.filter((t: any) => t.type === 'expense');
+  const incomes = monthTransactions.filter((t: any) => t.type === 'income');
+  const totalExpenses = expenses.reduce((sum: number, t: any) => sum + Math.abs(t.amount), 0);
+  const totalIncomes = incomes.reduce((sum: number, t: any) => sum + t.amount, 0);
+
+  return {
+    todayTasks,
+    allTasks,
+    todayEvents,
+    allEvents,
+    monthTransactions: {
+      list: monthTransactions,
+      total: monthTransactions.length,
+      expenses: expenses.length,
+      incomes: incomes.length,
+      totalExpenses,
+      totalIncomes,
+      balance: totalIncomes - totalExpenses,
+    },
+    goals,
+  };
+}
+
+// Função para formatar o contexto do usuário em texto
+function formatUserContext(context: any): string {
+  const today = new Date().toLocaleDateString('pt-BR', { 
+    weekday: 'long', 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
+
+  let text = `📅 Data de hoje: ${today}\n\n`;
+
+  // Tarefas de hoje
+  text += `📋 TAREFAS DE HOJE (${context.todayTasks.length}):\n`;
+  if (context.todayTasks.length === 0) {
+    text += '  - Nenhuma tarefa para hoje\n';
+  } else {
+    context.todayTasks.forEach((task: any) => {
+      const status = task.completed ? '✅' : '⬜';
+      const time = task.due_time ? ` às ${task.due_time}` : '';
+      text += `  ${status} ${task.title}${time} [${task.priority || 'medium'}]\n`;
+    });
+  }
+
+  // Todas as tarefas pendentes
+  const pendingTasks = context.allTasks.filter((t: any) => !t.completed);
+  text += `\n📝 TODAS AS TAREFAS PENDENTES (${pendingTasks.length}):\n`;
+  if (pendingTasks.length === 0) {
+    text += '  - Nenhuma tarefa pendente\n';
+  } else {
+    pendingTasks.slice(0, 10).forEach((task: any) => {
+      const dueDate = task.due_date ? ` - Vence: ${new Date(task.due_date).toLocaleDateString('pt-BR')}` : '';
+      text += `  - ${task.title}${dueDate} [${task.priority || 'medium'}]\n`;
+    });
+    if (pendingTasks.length > 10) {
+      text += `  ... e mais ${pendingTasks.length - 10} tarefas\n`;
+    }
+  }
+
+  // Eventos de hoje
+  text += `\n📆 EVENTOS DE HOJE (${context.todayEvents.length}):\n`;
+  if (context.todayEvents.length === 0) {
+    text += '  - Nenhum evento para hoje\n';
+  } else {
+    context.todayEvents.forEach((event: any) => {
+      const time = new Date(event.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      text += `  - ${time}: ${event.title}${event.location ? ` em ${event.location}` : ''}\n`;
+    });
+  }
+
+  // Próximos eventos
+  text += `\n🗓️ PRÓXIMOS EVENTOS (${context.allEvents.length}):\n`;
+  if (context.allEvents.length === 0) {
+    text += '  - Nenhum evento agendado\n';
+  } else {
+    context.allEvents.slice(0, 5).forEach((event: any) => {
+      const date = new Date(event.start_time).toLocaleDateString('pt-BR');
+      const time = new Date(event.start_time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      text += `  - ${date} ${time}: ${event.title}\n`;
+    });
+  }
+
+  // Resumo financeiro do mês
+  const fin = context.monthTransactions;
+  text += `\n💰 FINANÇAS DO MÊS:\n`;
+  text += `  - Receitas: R$ ${fin.totalIncomes.toFixed(2)} (${fin.incomes} registros)\n`;
+  text += `  - Despesas: R$ ${fin.totalExpenses.toFixed(2)} (${fin.expenses} registros)\n`;
+  text += `  - Saldo: R$ ${fin.balance.toFixed(2)}\n`;
+
+  // Últimas transações
+  if (fin.list && fin.list.length > 0) {
+    text += `\n  📊 Últimas transações:\n`;
+    fin.list.slice(0, 5).forEach((t: any) => {
+      const type = t.type === 'expense' ? '🔴' : '🟢';
+      const value = Math.abs(t.amount).toFixed(2);
+      text += `    ${type} ${t.title}: R$ ${value} (${t.category})\n`;
+    });
+  }
+
+  // Metas
+  text += `\n🎯 METAS ATIVAS (${context.goals.length}):\n`;
+  if (context.goals.length === 0) {
+    text += '  - Nenhuma meta definida\n';
+  } else {
+    context.goals.forEach((goal: any) => {
+      const deadline = goal.deadline ? ` - Prazo: ${new Date(goal.deadline).toLocaleDateString('pt-BR')}` : '';
+      const progress = goal.progress_percentage || 0;
+      text += `  - ${goal.title} [${progress}%]${deadline}\n`;
+    });
+  }
+
+  return text;
+}
+
+// Função para baixar imagem e converter para base64
+async function fetchImageAsBase64(url: string): Promise<{ base64: string; mimeType: string } | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image: ${response.statusText}`);
+    }
+    
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+    const arrayBuffer = await response.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    
+    return { base64, mimeType: contentType };
+  } catch (error) {
+    console.error('[Chat] Erro ao baixar imagem:', error);
+    return null;
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const { message, history, userId } = await request.json();
+    const { message, history, userId, media } = await request.json();
 
-    if (!message) {
-      return NextResponse.json({ error: 'Mensagem é obrigatória' }, { status: 400 });
+    if (!message && !media) {
+      return NextResponse.json({ error: 'Mensagem ou mídia é obrigatória' }, { status: 400 });
     }
 
     if (!process.env.GEMINI_API_KEY) {
       return NextResponse.json({ error: 'API do Gemini não configurada' }, { status: 500 });
+    }
+
+    // Buscar contexto do usuário se tiver userId
+    let userContext = null;
+    if (userId) {
+      userContext = await getUserContext(userId);
+    }
+
+    // Preparar partes do conteúdo para o Gemini
+    const parts: Part[] = [];
+    
+    // Adicionar contexto do usuário na mensagem
+    let messageWithContext = message || '';
+    if (userContext && message) {
+      const contextStr = formatUserContext(userContext);
+      messageWithContext = `[USER_CONTEXT]\n${contextStr}\n[/USER_CONTEXT]\n\nMensagem do usuário: ${message}`;
+    }
+    
+    // Adicionar mensagem de texto
+    if (messageWithContext) {
+      parts.push({ text: messageWithContext });
+    }
+
+    // Se houver mídia (imagem ou áudio), processar
+    let mediaUrl = media?.url;
+    
+    // Processar IMAGEM
+    if (media && media.type === 'image' && media.url) {
+      try {
+        const imageData = await fetchImageAsBase64(media.url);
+        if (imageData) {
+          parts.push({
+            inlineData: {
+              mimeType: imageData.mimeType,
+              data: imageData.base64,
+            },
+          });
+          
+          // Se não houver mensagem, adicionar contexto
+          if (!message) {
+            parts.unshift({ text: 'O usuário enviou esta imagem. Se for um recibo, nota fiscal ou comprovante, analise e extraia as informações relevantes (valor, estabelecimento, data, categoria). Ofereça para registrar como despesa.' });
+          }
+        }
+      } catch (error) {
+        console.error('[Chat] Erro ao processar imagem:', error);
+      }
+    }
+    
+    // Processar ÁUDIO
+    if (media && media.type === 'audio') {
+      try {
+        let audioData: { base64: string; mimeType: string } | null = null;
+        
+        // Se já veio em base64 (direto do cliente)
+        if (media.base64) {
+          audioData = {
+            base64: media.base64,
+            mimeType: media.mimeType || 'audio/webm',
+          };
+        } 
+        // Se é uma URL, baixar
+        else if (media.url) {
+          audioData = await fetchAudioAsBase64(media.url);
+        }
+        
+        if (audioData) {
+          parts.push({
+            inlineData: {
+              mimeType: audioData.mimeType,
+              data: audioData.base64,
+            },
+          });
+          
+          // Contexto detalhado para melhor entendimento do áudio
+          const audioContext = `
+INSTRUÇÕES PARA PROCESSAMENTO DE ÁUDIO:
+O usuário enviou uma mensagem de voz em português brasileiro. Por favor:
+
+1. OUÇA ATENTAMENTE todo o áudio antes de responder
+2. TRANSCREVA mentalmente o que o usuário disse
+3. INTERPRETE a intenção do usuário considerando:
+   - Sotaques e variações do português brasileiro
+   - Possíveis ruídos de fundo
+   - Palavras que podem soar similares
+   
+4. Se o usuário mencionou:
+   - GASTOS/DESPESAS (ex: "gastei", "paguei", "comprei", "custou")
+   - TAREFAS/LEMBRETES (ex: "lembra", "preciso", "tenho que", "não esquecer")
+   - EVENTOS/COMPROMISSOS (ex: "reunião", "encontro", "agenda", "marcar")
+   - METAS/OBJETIVOS (ex: "quero", "meu objetivo", "pretendo")
+
+5. Se não entendeu algo claramente, peça para o usuário repetir
+
+⚠️ IMPORTANTE - CONFIRMAÇÃO:
+- NUNCA crie ações automaticamente
+- Primeiro, diga o que você entendeu do áudio
+- Depois, PERGUNTE se o usuário quer que você registre/crie
+- Só inclua o bloco [ACTION] quando o usuário CONFIRMAR (ex: "sim", "pode", "isso", "confirma")
+- Se o usuário disser "sim", "pode", "confirma" no MESMO áudio, aí pode criar a ação
+
+RESPONDA em português brasileiro de forma natural e amigável.
+`;
+          
+          // Se não houver mensagem de texto, usar o contexto
+          if (!message) {
+            parts.unshift({ text: audioContext });
+          } else {
+            parts.unshift({ text: audioContext + '\n\nO usuário também escreveu: ' + message });
+          }
+        }
+      } catch (error) {
+        console.error('[Chat] Erro ao processar áudio:', error);
+      }
     }
 
     // Construir o histórico de conversa para o Gemini
@@ -236,7 +735,7 @@ export async function POST(request: NextRequest) {
         },
         {
           role: 'model',
-          parts: [{ text: ZED_SYSTEM_PROMPT + '\n\nOlá! 👋 Sim, eu sou o ZED, seu assistente virtual pessoal! Estou aqui para ajudar você a organizar sua vida, gerenciar tarefas, controlar finanças e muito mais. Como posso te ajudar hoje?' }],
+          parts: [{ text: ZED_SYSTEM_PROMPT + '\n\nOlá! 👋 Sim, eu sou o ZED, seu assistente virtual pessoal! Estou aqui para ajudar você a organizar sua vida, gerenciar tarefas, controlar finanças e muito mais. Você pode me enviar fotos de recibos que eu analiso e registro automaticamente! Como posso te ajudar hoje?' }],
         },
         ...formattedHistory,
       ],
@@ -248,8 +747,8 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Enviar mensagem e obter resposta
-    const result = await chat.sendMessage(message);
+    // Enviar mensagem (com ou sem imagem) e obter resposta
+    const result = await chat.sendMessage(parts);
     const response = result.response;
     const text = response.text();
 
@@ -258,7 +757,7 @@ export async function POST(request: NextRequest) {
     let actionResult = null;
 
     if (userId && text.includes('[ACTION]')) {
-      const actionResponse = await extractAndExecuteAction(text, userId);
+      const actionResponse = await extractAndExecuteAction(text, userId, mediaUrl);
       cleanText = actionResponse.cleanText;
       actionResult = actionResponse.actionResult;
     }

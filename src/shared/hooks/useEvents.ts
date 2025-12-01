@@ -35,18 +35,29 @@ export interface CreateEventInput {
 export const useEvents = () => {
   const [events, setEvents] = useState<Event[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const { user } = useSupabaseAuth();
+  const { user, isLoading: authLoading } = useSupabaseAuth();
   const supabase = createClient();
 
   const fetchEvents = useCallback(async () => {
-    if (!user) return;
+    // Buscar usuário diretamente se não estiver disponível via hook
+    let userId = user?.id;
+    
+    if (!userId) {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      userId = currentUser?.id;
+    }
+    
+    if (!userId) {
+      setIsLoading(false);
+      return;
+    }
 
     setIsLoading(true);
     try {
       const { data, error } = await supabase
         .from('events')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .order('start_time', { ascending: true });
 
       if (error) throw error;
@@ -59,8 +70,11 @@ export const useEvents = () => {
   }, [user, supabase]);
 
   useEffect(() => {
-    fetchEvents();
-  }, [fetchEvents]);
+    // Aguardar autenticação carregar antes de buscar eventos
+    if (!authLoading) {
+      fetchEvents();
+    }
+  }, [fetchEvents, authLoading, user]);
 
   const createEvent = useCallback(async (input: CreateEventInput): Promise<Event | null> => {
     if (!user) {
@@ -156,4 +170,5 @@ export const useEvents = () => {
     deleteEvent,
   };
 };
+
 

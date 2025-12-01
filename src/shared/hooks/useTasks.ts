@@ -24,11 +24,19 @@ export interface Task {
 export const useTasks = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const { user } = useSupabaseAuth();
+  const { user, isLoading: authLoading } = useSupabaseAuth();
   const supabase = createClient();
 
   const fetchTasks = useCallback(async () => {
-    if (!user) {
+    // Buscar usuário diretamente se não estiver disponível via hook
+    let userId = user?.id;
+    
+    if (!userId) {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      userId = currentUser?.id;
+    }
+    
+    if (!userId) {
       setTasks([]);
       setIsLoading(false);
       return;
@@ -39,7 +47,7 @@ export const useTasks = () => {
       const { data, error } = await supabase
         .from('tasks')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -60,8 +68,10 @@ export const useTasks = () => {
   }, [user, supabase]);
 
   useEffect(() => {
-    fetchTasks();
-  }, [fetchTasks]);
+    if (!authLoading) {
+      fetchTasks();
+    }
+  }, [fetchTasks, authLoading, user]);
 
   const addTask = async (task: Omit<Task, 'id' | 'created_at'>) => {
     if (!user) return null;
@@ -168,4 +178,5 @@ export const useTasks = () => {
     updateStatus,
   };
 };
+
 

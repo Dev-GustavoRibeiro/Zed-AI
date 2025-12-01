@@ -55,16 +55,37 @@ export default function SchedulePage() {
   const { events: dbEvents, isLoading, createEvent, deleteEvent } = useEvents()
   
   // Converter eventos do banco para o formato local
+  // Usando formatação que respeita o timezone local
   const events: Event[] = dbEvents.map(e => {
     const startDate = new Date(e.start_time)
     const endDate = e.end_time ? new Date(e.end_time) : null
+    
+    // Extrair data no formato YYYY-MM-DD no timezone local
+    const year = startDate.getFullYear()
+    const month = String(startDate.getMonth() + 1).padStart(2, '0')
+    const day = String(startDate.getDate()).padStart(2, '0')
+    const dateStr = `${year}-${month}-${day}`
+    
+    // Extrair hora no formato HH:MM no timezone local
+    const hours = String(startDate.getHours()).padStart(2, '0')
+    const minutes = String(startDate.getMinutes()).padStart(2, '0')
+    const timeStr = `${hours}:${minutes}`
+    
+    // Hora de término
+    let endTimeStr: string | undefined
+    if (endDate) {
+      const endHours = String(endDate.getHours()).padStart(2, '0')
+      const endMinutes = String(endDate.getMinutes()).padStart(2, '0')
+      endTimeStr = `${endHours}:${endMinutes}`
+    }
+    
     return {
       id: e.id,
       title: e.title,
       description: e.description || undefined,
-      date: startDate.toISOString().split('T')[0],
-      time: startDate.toTimeString().slice(0, 5),
-      endTime: endDate ? endDate.toTimeString().slice(0, 5) : undefined,
+      date: dateStr,
+      time: timeStr,
+      endTime: endTimeStr,
       location: e.location || undefined,
       type: (e.category as Event['type']) || 'personal',
       color: getColorForCategory(e.category),
@@ -115,16 +136,23 @@ export default function SchedulePage() {
   const handleSaveEvent = async () => {
     if (!newEvent.title || !newEvent.date || !newEvent.time) return
     
-    const startTime = new Date(`${newEvent.date}T${newEvent.time}:00`).toISOString()
-    const endTime = newEvent.endTime 
-      ? new Date(`${newEvent.date}T${newEvent.endTime}:00`).toISOString()
+    // Criar timestamp preservando o timezone local
+    // Formato: 2024-12-01T14:30:00-03:00
+    const localStartTime = `${newEvent.date}T${newEvent.time}:00`
+    const localEndTime = newEvent.endTime 
+      ? `${newEvent.date}T${newEvent.endTime}:00`
       : undefined
     
+    // Converter para ISO string mantendo o offset do timezone
+    const startDate = new Date(localStartTime)
+    const endDate = localEndTime ? new Date(localEndTime) : undefined
+    
+    // Usar toISOString() que converte para UTC corretamente
     await createEvent({
       title: newEvent.title,
       description: newEvent.description || undefined,
-      start_time: startTime,
-      end_time: endTime,
+      start_time: startDate.toISOString(),
+      end_time: endDate?.toISOString(),
       location: newEvent.location || undefined,
       category: newEvent.type,
     })
@@ -313,15 +341,32 @@ export default function SchedulePage() {
             </CardContent>
           </Card>
 
-          {/* Quick Actions */}
+          {/* Eventos de Hoje */}
           <Card className="mt-4">
-            <CardHeader icon={<Bell className="h-5 w-5 text-blue-400" />}>
-              <CardTitle>Lembretes Rápidos</CardTitle>
+            <CardHeader icon={<Clock className="h-5 w-5 text-blue-400" />}>
+              <CardTitle>Hoje</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              <QuickReminder label="Reunião em 30 min" time="14:00" />
-              <QuickReminder label="Dentista amanhã" time="10:00" />
-              <QuickReminder label="Aniversário João" time="19:00" />
+              {(() => {
+                const today = new Date()
+                const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+                const todayEvents = events.filter(e => e.date === todayStr)
+                
+                if (todayEvents.length === 0) {
+                  return (
+                    <p className="text-sm text-slate-500 text-center py-4">
+                      Nenhum evento hoje
+                    </p>
+                  )
+                }
+                
+                return todayEvents.map((event) => (
+                  <div key={event.id} className="flex items-center justify-between p-2 rounded-lg bg-white/5">
+                    <span className="text-sm text-slate-300 truncate">{event.title}</span>
+                    <span className="text-xs text-slate-500">{event.time}</span>
+                  </div>
+                ))
+              })()}
             </CardContent>
           </Card>
         </div>
@@ -532,17 +577,4 @@ const EventItem: React.FC<EventItemProps> = ({ event, index = 0, compact = false
     </motion.div>
   )
 }
-
-// Quick Reminder Component
-interface QuickReminderProps {
-  label: string
-  time: string
-}
-
-const QuickReminder: React.FC<QuickReminderProps> = ({ label, time }) => (
-  <div className="flex items-center justify-between p-2 rounded-lg bg-white/5">
-    <span className="text-sm text-slate-300">{label}</span>
-    <span className="text-xs text-slate-500">{time}</span>
-  </div>
-)
 

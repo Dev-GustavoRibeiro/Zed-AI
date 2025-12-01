@@ -1,45 +1,151 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { 
   User, 
   Bell, 
   Shield, 
-  Palette, 
   Mic, 
-  Volume2,
   Globe,
-  CreditCard,
   HelpCircle,
   ChevronRight,
-  Check,
-  Moon,
-  Sun,
-  Smartphone,
+  Camera,
+  Loader2,
+  Save,
+  Trash2,
+  LogOut,
 } from 'lucide-react'
 import { cn } from '@/shared/lib/utils'
 import { Card, CardHeader, CardTitle, CardContent } from '@/shared/components/molecules/Card'
 import { Button } from '@/shared/components/atoms/Button'
-import { Badge } from '@/shared/components/atoms/Badge'
 import { Input } from '@/shared/components/atoms/Input'
 import { Avatar } from '@/shared/components/atoms/Avatar'
+import { useUserProfile, useSupabaseAuth } from '@/shared/hooks'
+import toast from 'react-hot-toast'
 
 export default function SettingsPage() {
+  const { profile, isLoading, isUploading, uploadAvatar, updateName, refreshProfile } = useUserProfile()
+  const { logout } = useSupabaseAuth()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  
+  // Estados locais para os formulários
+  const [name, setName] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  
+  // Configurações de notificação (localStorage)
   const [notifications, setNotifications] = useState({
     email: true,
     push: true,
     sound: false,
   })
   
+  // Configurações de voz (localStorage)
   const [voice, setVoice] = useState({
     enabled: true,
     speed: 1,
-    autoPlay: false,
+    autoPlay: true, // Ativado por padrão
   })
 
+  // Carregar dados do perfil
+  useEffect(() => {
+    if (profile) {
+      setName(profile.name || '')
+    }
+  }, [profile])
+
+  // Carregar configurações do localStorage
+  useEffect(() => {
+    const savedNotifications = localStorage.getItem('zed_notifications')
+    const savedVoice = localStorage.getItem('zed_voice_settings')
+    
+    if (savedNotifications) {
+      try {
+        setNotifications(JSON.parse(savedNotifications))
+      } catch (e) {
+        console.error('Erro ao carregar configurações de notificação')
+      }
+    }
+    
+    if (savedVoice) {
+      try {
+        setVoice(JSON.parse(savedVoice))
+      } catch (e) {
+        console.error('Erro ao carregar configurações de voz')
+      }
+    }
+  }, [])
+
+  // Salvar configurações de notificação
+  const handleNotificationChange = (key: keyof typeof notifications, value: boolean) => {
+    const newNotifications = { ...notifications, [key]: value }
+    setNotifications(newNotifications)
+    localStorage.setItem('zed_notifications', JSON.stringify(newNotifications))
+    toast.success('Configuração salva!')
+  }
+
+  // Salvar configurações de voz
+  const handleVoiceChange = (key: keyof typeof voice, value: boolean | number) => {
+    const newVoice = { ...voice, [key]: value }
+    setVoice(newVoice)
+    localStorage.setItem('zed_voice_settings', JSON.stringify(newVoice))
+    if (typeof value === 'boolean') {
+      toast.success('Configuração salva!')
+    }
+  }
+
+  // Salvar nome do perfil
+  const handleSaveName = async () => {
+    if (!name.trim()) {
+      toast.error('O nome não pode estar vazio')
+      return
+    }
+    
+    setIsSaving(true)
+    const success = await updateName(name.trim())
+    setIsSaving(false)
+    
+    if (success) {
+      refreshProfile()
+    }
+  }
+
+  // Upload de foto
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      await uploadAvatar(file)
+    }
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  // Logout
+  const handleLogout = async () => {
+    await logout()
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
+      </div>
+    )
+  }
+
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
+    <div className="space-y-6 max-w-4xl mx-auto pb-8">
+      {/* Input oculto para upload */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        className="hidden"
+      />
+
       {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -61,29 +167,74 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent>
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6">
+              {/* Avatar com upload */}
               <div className="relative">
-                <Avatar size="2xl" fallback="U" variant="blue" />
-                <button className="absolute bottom-0 right-0 p-1.5 rounded-full bg-blue-500 text-white hover:bg-blue-600 transition-colors">
-                  <Palette className="h-4 w-4" />
+                <div className={cn(
+                  "relative",
+                  isUploading && "opacity-50"
+                )}>
+                  <Avatar 
+                    size="2xl" 
+                    src={profile?.avatar_url || undefined}
+                    fallback={profile?.name?.charAt(0) || profile?.email?.charAt(0) || 'U'} 
+                    variant="blue" 
+                  />
+                  {isUploading && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
+                    </div>
+                  )}
+                </div>
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading}
+                  className={cn(
+                    "absolute bottom-0 right-0 p-2 rounded-full transition-colors",
+                    "bg-blue-500 text-white hover:bg-blue-600",
+                    "shadow-lg shadow-blue-500/30",
+                    isUploading && "opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  <Camera className="h-4 w-4" />
                 </button>
               </div>
               
-              <div className="flex-1 space-y-4">
+              {/* Formulário */}
+              <div className="flex-1 space-y-4 w-full">
                 <div className="grid sm:grid-cols-2 gap-4">
-                  <Input
-                    label="Nome"
-                    defaultValue="Usuário Teste"
-                    placeholder="Seu nome"
-                  />
-                  <Input
-                    label="Email"
-                    type="email"
-                    defaultValue="usuario@exemplo.com"
-                    placeholder="seu@email.com"
-                  />
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-1.5">
+                      Nome
+                    </label>
+                    <Input
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="Seu nome"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-1.5">
+                      Email
+                    </label>
+                    <Input
+                      type="email"
+                      value={profile?.email || ''}
+                      disabled
+                      className="bg-slate-800/50 cursor-not-allowed opacity-60"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">
+                      O email não pode ser alterado
+                    </p>
+                  </div>
                 </div>
-                <Button variant="primary" size="sm">
-                  Salvar Alterações
+                <Button 
+                  variant="primary" 
+                  size="sm"
+                  onClick={handleSaveName}
+                  disabled={isSaving || name === profile?.name}
+                  leftIcon={isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                >
+                  {isSaving ? 'Salvando...' : 'Salvar Alterações'}
                 </Button>
               </div>
             </div>
@@ -106,19 +257,19 @@ export default function SettingsPage() {
               label="Notificações por email"
               description="Receba lembretes e atualizações por email"
               checked={notifications.email}
-              onChange={(checked) => setNotifications({ ...notifications, email: checked })}
+              onChange={(checked) => handleNotificationChange('email', checked)}
             />
             <ToggleSetting
               label="Notificações push"
               description="Receba notificações no navegador"
               checked={notifications.push}
-              onChange={(checked) => setNotifications({ ...notifications, push: checked })}
+              onChange={(checked) => handleNotificationChange('push', checked)}
             />
             <ToggleSetting
               label="Sons de notificação"
               description="Tocar som ao receber notificações"
               checked={notifications.sound}
-              onChange={(checked) => setNotifications({ ...notifications, sound: checked })}
+              onChange={(checked) => handleNotificationChange('sound', checked)}
             />
           </CardContent>
         </Card>
@@ -139,13 +290,13 @@ export default function SettingsPage() {
               label="Respostas por voz"
               description="ZED responde suas mensagens em áudio"
               checked={voice.enabled}
-              onChange={(checked) => setVoice({ ...voice, enabled: checked })}
+              onChange={(checked) => handleVoiceChange('enabled', checked)}
             />
             <ToggleSetting
               label="Auto-play de áudio"
               description="Reproduzir áudio automaticamente"
               checked={voice.autoPlay}
-              onChange={(checked) => setVoice({ ...voice, autoPlay: checked })}
+              onChange={(checked) => handleVoiceChange('autoPlay', checked)}
             />
             
             <div className="pt-2">
@@ -159,100 +310,11 @@ export default function SettingsPage() {
                   max="2"
                   step="0.1"
                   value={voice.speed}
-                  onChange={(e) => setVoice({ ...voice, speed: parseFloat(e.target.value) })}
+                  onChange={(e) => handleVoiceChange('speed', parseFloat(e.target.value))}
                   className="flex-1 h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
                 />
-                <span className="text-sm text-slate-400 w-12">{voice.speed}x</span>
+                <span className="text-sm text-slate-400 w-12 text-center">{voice.speed}x</span>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
-
-      {/* Appearance Section */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.4 }}
-      >
-        <Card>
-          <CardHeader icon={<Palette className="h-5 w-5 text-emerald-400" />}>
-            <CardTitle>Aparência</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-3">
-                  Tema
-                </label>
-                <div className="grid grid-cols-3 gap-3">
-                  <ThemeOption
-                    icon={Moon}
-                    label="Escuro"
-                    selected={true}
-                  />
-                  <ThemeOption
-                    icon={Sun}
-                    label="Claro"
-                    selected={false}
-                  />
-                  <ThemeOption
-                    icon={Smartphone}
-                    label="Sistema"
-                    selected={false}
-                  />
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-3">
-                  Cor de destaque
-                </label>
-                <div className="flex gap-3">
-                  {['blue', 'amber', 'emerald', 'purple', 'pink'].map((color) => (
-                    <button
-                      key={color}
-                      className={cn(
-                        "h-8 w-8 rounded-full transition-transform hover:scale-110",
-                        color === 'blue' && "bg-blue-500 ring-2 ring-blue-500/30 ring-offset-2 ring-offset-slate-900",
-                        color === 'amber' && "bg-amber-500",
-                        color === 'emerald' && "bg-emerald-500",
-                        color === 'purple' && "bg-purple-500",
-                        color === 'pink' && "bg-pink-500",
-                      )}
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
-
-      {/* Subscription Section */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5 }}
-      >
-        <Card variant="gold">
-          <CardHeader icon={<CreditCard className="h-5 w-5 text-amber-400" />}>
-            <div className="flex items-center gap-2">
-              <CardTitle>Assinatura</CardTitle>
-              <Badge variant="gold" size="sm">Free</Badge>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div>
-                <p className="text-white font-medium">Plano Free</p>
-                <p className="text-sm text-slate-400">
-                  50 mensagens/mês • Recursos básicos
-                </p>
-              </div>
-              <Button variant="gold">
-                Fazer Upgrade
-              </Button>
             </div>
           </CardContent>
         </Card>
@@ -262,14 +324,14 @@ export default function SettingsPage() {
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.6 }}
+        transition={{ delay: 0.4 }}
       >
         <Card>
           <CardContent className="p-0">
             <LinkItem
               icon={Shield}
               label="Privacidade e Segurança"
-              description="Gerencie suas configurações de privacidade"
+              description="Seus dados estão seguros conosco"
             />
             <LinkItem
               icon={Globe}
@@ -286,41 +348,87 @@ export default function SettingsPage() {
         </Card>
       </motion.div>
 
-      {/* Danger Zone */}
+      {/* Account Actions */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.7 }}
+        transition={{ delay: 0.5 }}
       >
         <Card>
           <CardHeader>
-            <CardTitle className="text-red-400">Zona de Perigo</CardTitle>
+            <CardTitle className="text-red-400">Conta</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Logout */}
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-white font-medium">Exportar dados</p>
+                <p className="text-white font-medium">Sair da conta</p>
                 <p className="text-sm text-slate-400">
-                  Baixe uma cópia de todos os seus dados
+                  Encerrar sua sessão atual
                 </p>
               </div>
-              <Button variant="outline" size="sm">
-                Exportar
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={handleLogout}
+                leftIcon={<LogOut className="h-4 w-4" />}
+              >
+                Sair
               </Button>
             </div>
-            <div className="flex items-center justify-between">
+
+            {/* Delete Account */}
+            <div className="flex items-center justify-between pt-4 border-t border-white/10">
               <div>
                 <p className="text-white font-medium">Excluir conta</p>
                 <p className="text-sm text-slate-400">
                   Exclua permanentemente sua conta e dados
                 </p>
               </div>
-              <Button variant="destructive" size="sm">
-                Excluir
-              </Button>
+              {!showDeleteConfirm ? (
+                <Button 
+                  variant="destructive" 
+                  size="sm"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  leftIcon={<Trash2 className="h-4 w-4" />}
+                >
+                  Excluir
+                </Button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => setShowDeleteConfirm(false)}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button 
+                    variant="destructive" 
+                    size="sm"
+                    onClick={() => {
+                      toast.error('Funcionalidade em desenvolvimento')
+                      setShowDeleteConfirm(false)
+                    }}
+                  >
+                    Confirmar
+                  </Button>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
+      </motion.div>
+
+      {/* Info */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.6 }}
+        className="text-center text-slate-500 text-sm"
+      >
+        <p>ZED - Seu Assistente Pessoal Inteligente</p>
+        <p className="text-xs mt-1">Versão 1.0.0</p>
       </motion.div>
     </div>
   )
@@ -362,38 +470,6 @@ const ToggleSetting: React.FC<ToggleSettingProps> = ({
   </div>
 )
 
-// Theme Option Component
-interface ThemeOptionProps {
-  icon: React.ElementType
-  label: string
-  selected: boolean
-}
-
-const ThemeOption: React.FC<ThemeOptionProps> = ({ icon: Icon, label, selected }) => (
-  <button
-    className={cn(
-      "flex flex-col items-center gap-2 p-4 rounded-xl transition-all",
-      selected
-        ? "bg-blue-500/20 border-2 border-blue-500/50"
-        : "bg-white/5 border-2 border-transparent hover:bg-white/10"
-    )}
-  >
-    <Icon className={cn(
-      "h-5 w-5",
-      selected ? "text-blue-400" : "text-slate-400"
-    )} />
-    <span className={cn(
-      "text-sm font-medium",
-      selected ? "text-white" : "text-slate-400"
-    )}>
-      {label}
-    </span>
-    {selected && (
-      <Check className="h-4 w-4 text-blue-400" />
-    )}
-  </button>
-)
-
 // Link Item Component
 interface LinkItemProps {
   icon: React.ElementType
@@ -403,9 +479,9 @@ interface LinkItemProps {
 }
 
 const LinkItem: React.FC<LinkItemProps> = ({ icon: Icon, label, description, isLast }) => (
-  <button
+  <div
     className={cn(
-      "flex items-center gap-4 w-full p-4 hover:bg-white/5 transition-colors",
+      "flex items-center gap-4 w-full p-4 hover:bg-white/5 transition-colors cursor-pointer",
       !isLast && "border-b border-white/5"
     )}
   >
@@ -417,6 +493,5 @@ const LinkItem: React.FC<LinkItemProps> = ({ icon: Icon, label, description, isL
       <p className="text-sm text-slate-400">{description}</p>
     </div>
     <ChevronRight className="h-5 w-5 text-slate-600" />
-  </button>
+  </div>
 )
-

@@ -20,11 +20,18 @@ export interface Transaction {
 export const useTransactions = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const { user } = useSupabaseAuth();
+  const { user, isLoading: authLoading } = useSupabaseAuth();
   const supabase = createClient();
 
   const fetchTransactions = useCallback(async () => {
-    if (!user) {
+    let userId = user?.id;
+    
+    if (!userId) {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      userId = currentUser?.id;
+    }
+    
+    if (!userId) {
       setTransactions([]);
       setIsLoading(false);
       return;
@@ -35,7 +42,7 @@ export const useTransactions = () => {
       const { data, error } = await supabase
         .from('transactions')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .order('date', { ascending: false });
 
       if (error) throw error;
@@ -52,8 +59,10 @@ export const useTransactions = () => {
   }, [user, supabase]);
 
   useEffect(() => {
-    fetchTransactions();
-  }, [fetchTransactions]);
+    if (!authLoading) {
+      fetchTransactions();
+    }
+  }, [fetchTransactions, authLoading, user]);
 
   const addTransaction = async (transaction: Omit<Transaction, 'id' | 'created_at'>) => {
     if (!user) return null;
@@ -154,4 +163,5 @@ export const useTransactions = () => {
     expensesByCategory,
   };
 };
+
 

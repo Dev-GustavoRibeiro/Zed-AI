@@ -59,20 +59,29 @@ export default function RoutinePage() {
   const { tasks: dbTasks, isLoading, addTask, updateTask, deleteTask, toggleTask, updateStatus } = useTasks()
   
   // Converter tasks do banco para o formato local
-  const tasks: Task[] = dbTasks.map(t => ({
-    id: t.id,
-    title: t.title,
-    description: t.description,
-    completed: t.completed,
-    status: t.status,
-    priority: t.priority,
-    effort: t.effort,
-    energy_level: t.energy_level,
-    dueTime: t.due_time,
-    dueDate: t.due_date,
-    category: t.category,
-    estimated_duration: t.estimated_duration,
-  }))
+  // Formatando o horário de forma consistente
+  const tasks: Task[] = dbTasks.map(t => {
+    // Formatar due_time para exibição (pode vir como "HH:MM:SS" do banco)
+    let formattedDueTime = t.due_time
+    if (t.due_time && t.due_time.length > 5) {
+      formattedDueTime = t.due_time.slice(0, 5) // Pegar apenas HH:MM
+    }
+    
+    return {
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      completed: t.completed,
+      status: t.status,
+      priority: t.priority,
+      effort: t.effort,
+      energy_level: t.energy_level,
+      dueTime: formattedDueTime,
+      dueDate: t.due_date,
+      category: t.category,
+      estimated_duration: t.estimated_duration,
+    }
+  })
 
   const [filter, setFilter] = useState('Todos')
   const [statusFilter, setStatusFilter] = useState<string | null>(null)

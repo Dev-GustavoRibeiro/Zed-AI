@@ -232,3 +232,4 @@ CREATE TRIGGER update_goals_updated_at
 -- ON storage.objects FOR SELECT
 -- USING (auth.uid()::text = (storage.foldername(name))[1]);
 
+

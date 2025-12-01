@@ -29,11 +29,18 @@ export interface GoalMilestone {
 export const useGoals = () => {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const { user } = useSupabaseAuth();
+  const { user, isLoading: authLoading } = useSupabaseAuth();
   const supabase = createClient();
 
   const fetchGoals = useCallback(async () => {
-    if (!user) {
+    let userId = user?.id;
+    
+    if (!userId) {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      userId = currentUser?.id;
+    }
+    
+    if (!userId) {
       setGoals([]);
       setIsLoading(false);
       return;
@@ -44,7 +51,7 @@ export const useGoals = () => {
       const { data, error } = await supabase
         .from('goals')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -64,8 +71,10 @@ export const useGoals = () => {
   }, [user, supabase]);
 
   useEffect(() => {
-    fetchGoals();
-  }, [fetchGoals]);
+    if (!authLoading) {
+      fetchGoals();
+    }
+  }, [fetchGoals, authLoading, user]);
 
   const addGoal = async (goal: Omit<Goal, 'id' | 'created_at'>) => {
     if (!user) return null;
@@ -158,4 +167,5 @@ export const useGoals = () => {
     toggleGoal,
   };
 };
+
 
