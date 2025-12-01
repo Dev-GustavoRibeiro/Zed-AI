@@ -209,7 +209,7 @@ npm install
 
 #### 3. Configure as variáveis de ambiente
 
-Crie um arquivo `.env.local` na raiz do projeto:
+Crie um arquivo `.env` na raiz do projeto:
 
 ```env
 # ====================================
