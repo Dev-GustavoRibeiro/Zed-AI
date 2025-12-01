@@ -34,14 +34,18 @@ export const useAdmin = () => {
             .from('admin_users')
             .select('*')
             .eq('user_id', user.id)
-            .single();
+            .maybeSingle();
 
           if (adminUser && !error) {
             setAdminData(adminUser as AdminUser);
             setIsAdmin(true);
           } else {
+            setAdminData(null);
             setIsAdmin(false);
           }
+        } else {
+          setAdminData(null);
+          setIsAdmin(false);
         }
       } catch (error) {
         console.error('Erro ao verificar admin:', error);

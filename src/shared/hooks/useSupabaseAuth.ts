@@ -86,15 +86,21 @@ export const useSupabaseAuth = () => {
       
       // Verificar se é admin para redirecionar corretamente
       if (data.user) {
-        const { data: adminUser } = await supabase
+        const { data: adminUser, error: adminError } = await supabase
           .from('admin_users')
           .select('id, role')
           .eq('user_id', data.user.id)
           .maybeSingle();
         
+        // Se houver erro, logar para debug (mas não mostrar ao usuário)
+        if (adminError) {
+          console.error('[Auth] Erro ao verificar admin:', adminError);
+        }
+        
         toast.success('Login realizado com sucesso!');
         
-        if (adminUser) {
+        // Verificar se é admin (adminUser não é null e não há erro)
+        if (adminUser && !adminError) {
           window.location.href = '/admin';
         } else {
           window.location.href = '/dashboard';
@@ -166,11 +172,54 @@ export const useSupabaseAuth = () => {
     }
   }, [supabase]);
 
+  const deleteAccount = useCallback(async (): Promise<boolean> => {
+    try {
+      // Verificar se temos um usuário autenticado
+      if (!user?.id) {
+        toast.error('Usuário não autenticado');
+        return false;
+      }
+
+      // Chamar API route para excluir conta
+      const response = await fetch('/api/account/delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId: user.id }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        toast.error(data.error || 'Erro ao excluir conta');
+        return false;
+      }
+
+      // Limpar estado local
+      setUser(null);
+      
+      toast.success('Conta excluída com sucesso!');
+      
+      // Redirecionar para login após um breve delay
+      setTimeout(() => {
+        router.push('/login');
+      }, 1500);
+
+      return true;
+    } catch (error: any) {
+      console.error('Erro ao excluir conta:', error);
+      toast.error('Erro ao excluir conta. Tente novamente.');
+      return false;
+    }
+  }, [user, router]);
+
   return {
     logout,
     login,
     signup,
     resendConfirmationEmail,
+    deleteAccount,
     user,
     isLoading,
     isAuthenticated: !!user,

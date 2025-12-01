@@ -17,7 +17,7 @@ interface UseVoiceReturn {
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<Blob | null>;
   speak: (text: string) => Promise<void>;
-  stopSpeaking: () => void;
+  stopSpeaking: () => Promise<void>;
   hasSupport: {
     audioRecording: boolean;
     speechSynthesis: boolean;
@@ -47,6 +47,7 @@ export const useVoice = (options: UseVoiceOptions = {}): UseVoiceReturn => {
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
   const ttsAudioUrlRef = useRef<string | null>(null);
   const resolveRecordingRef = useRef<((blob: Blob | null) => void) | null>(null);
+  const ttsPlayPromiseRef = useRef<Promise<void> | null>(null);
   
   // Verificar suporte apenas no cliente
   useEffect(() => {
@@ -284,6 +285,15 @@ export const useVoice = (options: UseVoiceOptions = {}): UseVoiceReturn => {
         URL.revokeObjectURL(ttsAudioUrlRef.current);
       }
       if (ttsAudioRef.current) {
+        // Se há uma promessa de play pendente, aguardar antes de pausar
+        if (ttsPlayPromiseRef.current) {
+          try {
+            await ttsPlayPromiseRef.current;
+          } catch (err) {
+            // Ignorar erros de play interrompido
+          }
+          ttsPlayPromiseRef.current = null;
+        }
         ttsAudioRef.current.pause();
       }
       
@@ -297,6 +307,7 @@ export const useVoice = (options: UseVoiceOptions = {}): UseVoiceReturn => {
       audio.onplay = () => setIsSpeaking(true);
       audio.onended = () => {
         setIsSpeaking(false);
+        ttsPlayPromiseRef.current = null;
         if (ttsAudioUrlRef.current) {
           URL.revokeObjectURL(ttsAudioUrlRef.current);
           ttsAudioUrlRef.current = null;
@@ -304,6 +315,7 @@ export const useVoice = (options: UseVoiceOptions = {}): UseVoiceReturn => {
       };
       audio.onerror = () => {
         setIsSpeaking(false);
+        ttsPlayPromiseRef.current = null;
         console.error('Erro ao reproduzir áudio');
         // Fallback para speechSynthesis nativo
         if (hasSupport.speechSynthesis) {
@@ -311,7 +323,18 @@ export const useVoice = (options: UseVoiceOptions = {}): UseVoiceReturn => {
         }
       };
       
-      await audio.play();
+      // Armazenar a promessa de play e tratar erros
+      ttsPlayPromiseRef.current = audio.play();
+      try {
+        await ttsPlayPromiseRef.current;
+      } catch (err: any) {
+        // Ignorar erros de play interrompido (AbortError)
+        if (err.name !== 'AbortError') {
+          throw err;
+        }
+      } finally {
+        ttsPlayPromiseRef.current = null;
+      }
       
     } catch (error) {
       console.error('Erro no TTS ElevenLabs:', error);
@@ -363,9 +386,18 @@ export const useVoice = (options: UseVoiceOptions = {}): UseVoiceReturn => {
   }, [useElevenLabs, speakWithElevenLabs, speakWithNative, hasSupport.speechSynthesis]);
 
   // Parar TTS
-  const stopSpeaking = useCallback(() => {
+  const stopSpeaking = useCallback(async () => {
     // Parar ElevenLabs audio
     if (ttsAudioRef.current) {
+      // Se há uma promessa de play pendente, aguardar antes de pausar
+      if (ttsPlayPromiseRef.current) {
+        try {
+          await ttsPlayPromiseRef.current;
+        } catch (err) {
+          // Ignorar erros de play interrompido (AbortError)
+        }
+        ttsPlayPromiseRef.current = null;
+      }
       ttsAudioRef.current.pause();
       ttsAudioRef.current.currentTime = 0;
     }

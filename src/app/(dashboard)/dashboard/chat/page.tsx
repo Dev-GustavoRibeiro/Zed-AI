@@ -273,12 +273,20 @@ export default function ChatPage() {
       // Mostrar toast se uma ação foi executada
       if (data.action) {
         const actionType = data.action.type
+        const actionType_ = data.action.action || 'created' // 'created', 'updated', 'deleted'
         const actionMessages: Record<string, { icon: string; text: string }> = {
           task: { icon: '✅', text: 'Tarefa criada com sucesso!' },
           event: { icon: '📅', text: 'Evento agendado com sucesso!' },
           expense: { icon: '💰', text: 'Despesa registrada com sucesso!' },
           income: { icon: '💵', text: 'Receita registrada com sucesso!' },
-          goal: { icon: '🎯', text: 'Meta criada com sucesso!' },
+          goal: { 
+            icon: '🎯', 
+            text: actionType_ === 'updated' 
+              ? 'Meta atualizada com sucesso!' 
+              : actionType_ === 'deleted'
+              ? 'Meta excluída com sucesso!'
+              : 'Meta criada com sucesso!' 
+          },
         }
         const actionMsg = actionMessages[actionType]
         if (actionMsg) {
@@ -439,9 +447,9 @@ export default function ChatPage() {
     setInputValue(suggestion)
   }
 
-  const speakMessage = (content: string) => {
+  const speakMessage = async (content: string) => {
     if (isSpeaking) {
-      stopSpeaking()
+      await stopSpeaking()
     } else {
       speak(content)
     }
@@ -884,21 +892,48 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ src, isUser }) => {
   const [isLoaded, setIsLoaded] = useState(false)
   const [error, setError] = useState(false)
   const audioRef = useRef<HTMLAudioElement>(null)
+  const playPromiseRef = useRef<Promise<void> | null>(null)
 
   const togglePlay = async () => {
-    if (audioRef.current) {
-      try {
-        if (isPlaying) {
-          audioRef.current.pause()
-          setIsPlaying(false)
-        } else {
-          await audioRef.current.play()
-          setIsPlaying(true)
+    if (!audioRef.current) return
+
+    try {
+      if (isPlaying) {
+        // Se há uma promessa de play pendente, aguardar antes de pausar
+        if (playPromiseRef.current) {
+          try {
+            await playPromiseRef.current
+          } catch (err) {
+            // Ignorar erros de play interrompido
+          }
+          playPromiseRef.current = null
         }
-      } catch (err) {
-        console.error('Erro ao reproduzir áudio:', err)
-        setError(true)
+        audioRef.current.pause()
+        setIsPlaying(false)
+      } else {
+        // Limpar qualquer promessa anterior
+        playPromiseRef.current = null
+        
+        // Iniciar reprodução e armazenar a promessa
+        playPromiseRef.current = audioRef.current.play()
+        
+        // Aguardar a promessa e tratar erros
+        try {
+          await playPromiseRef.current
+          setIsPlaying(true)
+        } catch (err: any) {
+          // Ignorar erros de play interrompido (AbortError)
+          if (err.name !== 'AbortError') {
+            console.error('Erro ao reproduzir áudio:', err)
+            setError(true)
+          }
+        } finally {
+          playPromiseRef.current = null
+        }
       }
+    } catch (err) {
+      console.error('Erro ao controlar áudio:', err)
+      setError(true)
     }
   }
 

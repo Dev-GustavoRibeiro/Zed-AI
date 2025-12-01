@@ -26,13 +26,15 @@ import toast from 'react-hot-toast'
 
 export default function SettingsPage() {
   const { profile, isLoading, isUploading, uploadAvatar, updateName, refreshProfile } = useUserProfile()
-  const { logout } = useSupabaseAuth()
+  const { logout, deleteAccount } = useSupabaseAuth()
   const fileInputRef = useRef<HTMLInputElement>(null)
   
   // Estados locais para os formulários
   const [name, setName] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [isDeleting, setIsDeleting] = useState(false)
   
   // Configurações de notificação (localStorage)
   const [notifications, setNotifications] = useState({
@@ -125,6 +127,23 @@ export default function SettingsPage() {
   // Logout
   const handleLogout = async () => {
     await logout()
+  }
+
+  // Delete Account
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmText !== 'EXCLUIR') {
+      toast.error('Digite "EXCLUIR" para confirmar')
+      return
+    }
+
+    setIsDeleting(true)
+    const success = await deleteAccount()
+    setIsDeleting(false)
+
+    if (!success) {
+      setShowDeleteConfirm(false)
+      setDeleteConfirmText('')
+    }
   }
 
   if (isLoading) {
@@ -378,42 +397,81 @@ export default function SettingsPage() {
             </div>
 
             {/* Delete Account */}
-            <div className="flex items-center justify-between pt-4 border-t border-white/10">
-              <div>
-                <p className="text-white font-medium">Excluir conta</p>
-                <p className="text-sm text-slate-400">
-                  Exclua permanentemente sua conta e dados
-                </p>
-              </div>
-              {!showDeleteConfirm ? (
-                <Button 
-                  variant="destructive" 
-                  size="sm"
-                  onClick={() => setShowDeleteConfirm(true)}
-                  leftIcon={<Trash2 className="h-4 w-4" />}
-                >
-                  Excluir
-                </Button>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => setShowDeleteConfirm(false)}
-                  >
-                    Cancelar
-                  </Button>
+            <div className="pt-4 border-t border-white/10">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <p className="text-white font-medium">Excluir conta</p>
+                  <p className="text-sm text-slate-400">
+                    Exclua permanentemente sua conta e todos os seus dados
+                  </p>
+                </div>
+                {!showDeleteConfirm && (
                   <Button 
                     variant="destructive" 
                     size="sm"
-                    onClick={() => {
-                      toast.error('Funcionalidade em desenvolvimento')
-                      setShowDeleteConfirm(false)
-                    }}
+                    onClick={() => setShowDeleteConfirm(true)}
+                    leftIcon={<Trash2 className="h-4 w-4" />}
                   >
-                    Confirmar
+                    Excluir
                   </Button>
-                </div>
+                )}
+              </div>
+
+              {showDeleteConfirm && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg space-y-4"
+                >
+                  <div>
+                    <p className="text-white font-medium mb-2">
+                      ⚠️ Esta ação é irreversível
+                    </p>
+                    <p className="text-sm text-slate-400 mb-4">
+                      Todos os seus dados serão excluídos permanentemente, incluindo:
+                    </p>
+                    <ul className="text-sm text-slate-400 list-disc list-inside space-y-1 mb-4">
+                      <li>Tarefas e eventos</li>
+                      <li>Transações financeiras</li>
+                      <li>Metas e objetivos</li>
+                      <li>Histórico de chat</li>
+                      <li>Foto de perfil</li>
+                    </ul>
+                    <p className="text-sm text-slate-300 font-medium mb-2">
+                      Digite <span className="text-red-400 font-bold">EXCLUIR</span> para confirmar:
+                    </p>
+                    <Input
+                      value={deleteConfirmText}
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      placeholder="Digite EXCLUIR"
+                      className="mb-4"
+                      disabled={isDeleting}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => {
+                        setShowDeleteConfirm(false)
+                        setDeleteConfirmText('')
+                      }}
+                      disabled={isDeleting}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button 
+                      variant="destructive" 
+                      size="sm"
+                      onClick={handleDeleteAccount}
+                      disabled={isDeleting || deleteConfirmText !== 'EXCLUIR'}
+                      leftIcon={isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    >
+                      {isDeleting ? 'Excluindo...' : 'Confirmar Exclusão'}
+                    </Button>
+                  </div>
+                </motion.div>
               )}
             </div>
           </CardContent>

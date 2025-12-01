@@ -28,6 +28,8 @@ const ZED_SYSTEM_PROMPT = `Você é o ZED, um assistente virtual pessoal intelig
 - CRIAR EVENTOS: Quando o usuário pedir para agendar algo
 - REGISTRAR GASTOS: Quando o usuário mencionar que gastou dinheiro
 - CRIAR METAS: Quando o usuário quiser definir objetivos
+- EDITAR METAS: Quando o usuário quiser modificar uma meta existente (precisa do ID da meta)
+- EXCLUIR METAS: Quando o usuário quiser remover uma meta (precisa do ID da meta)
 - ANALISAR IMAGENS: Quando o usuário enviar fotos de recibos, notas fiscais, comprovantes
 - EXTRAIR DADOS: Identificar valores, datas, estabelecimentos de documentos
 
@@ -71,8 +73,14 @@ TIPOS DE AÇÃO:
 4. create_income - Para receitas/entradas
    Dados: title, amount (número positivo), category, date (YYYY-MM-DD)
 
-5. create_goal - Para metas
+5. create_goal - Para criar metas
    Dados: title, description, area (Saúde/Financeiro/Estudos/Trabalho/Pessoal/Relacionamentos/Geral), timeframe (short/medium/long), deadline (YYYY-MM-DD)
+
+6. update_goal - Para editar metas existentes
+   Dados: id (obrigatório - ID da meta), title, description, area, timeframe, deadline, progress_percentage, target_value, current_value
+
+7. delete_goal - Para excluir metas
+   Dados: id (obrigatório - ID da meta)
 
 EXEMPLOS CORRETOS (com confirmação):
 
@@ -102,6 +110,21 @@ EXEMPLOS CORRETOS (com confirmação):
   • Categoria sugerida: Alimentação
   
   Quer que eu registre essa despesa?"
+
+📌 EXEMPLO 4 - Editar Meta (COM confirmação):
+- Usuário: "Atualiza a meta de emagrecer para 70kg"
+- Resposta: "Perfeito! ✅ Atualizei a meta para 70kg.
+  [ACTION]{"action":"update_goal","data":{"id":"abc123","target_value":70}}[/ACTION]"
+
+📌 EXEMPLO 5 - Excluir Meta (COM confirmação):
+- Usuário: "Remove a meta de aprender francês"
+- Resposta: "Pronto! ✅ Removi a meta de aprender francês.
+  [ACTION]{"action":"delete_goal","data":{"id":"xyz789"}}[/ACTION]"
+
+⚠️ IMPORTANTE PARA METAS:
+- Para editar ou excluir uma meta, você DEVE usar o ID da meta que está no contexto [USER_CONTEXT]
+- Se o usuário mencionar uma meta pelo nome, busque o ID correspondente no contexto antes de criar a ação
+- Sempre confirme antes de excluir uma meta
 
 REGRAS:
 - Sempre responda em português brasileiro
@@ -146,19 +169,42 @@ async function fetchAudioAsBase64(url: string): Promise<{ base64: string; mimeTy
   }
 }
 
+// Cache para evitar execução duplicada de ações (última ação executada)
+let lastExecutedAction: { hash: string; timestamp: number } | null = null;
+const ACTION_CACHE_TTL = 5000; // 5 segundos
+
+// Função para gerar hash único da ação
+function generateActionHash(actionData: ActionData): string {
+  return `${actionData.action}_${JSON.stringify(actionData.data)}`;
+}
+
 // Função para extrair e executar ação
 async function extractAndExecuteAction(text: string, userId: string, mediaUrl?: string): Promise<{ cleanText: string; actionResult?: any }> {
-  const actionMatch = text.match(/\[ACTION\](.*?)\[\/ACTION\]/s);
+  const actionMatch = text.match(/\[ACTION\]([\s\S]*?)\[\/ACTION\]/);
   
   if (!actionMatch) {
     return { cleanText: text };
   }
 
-  const cleanText = text.replace(/\[ACTION\].*?\[\/ACTION\]/s, '').trim();
+  const cleanText = text.replace(/\[ACTION\][\s\S]*?\[\/ACTION\]/, '').trim();
   
   try {
     const actionData: ActionData = JSON.parse(actionMatch[1]);
     console.log('[Chat] Ação detectada:', actionData);
+
+    // Verificar se esta ação já foi executada recentemente (proteção contra duplicação)
+    const actionHash = generateActionHash(actionData);
+    const now = Date.now();
+    
+    if (lastExecutedAction && 
+        lastExecutedAction.hash === actionHash && 
+        (now - lastExecutedAction.timestamp) < ACTION_CACHE_TTL) {
+      console.log('[Chat] Ação duplicada detectada, ignorando:', actionHash);
+      return { cleanText };
+    }
+
+    // Registrar esta ação como executada
+    lastExecutedAction = { hash: actionHash, timestamp: now };
 
     // Adicionar URL da mídia se houver
     if (mediaUrl && actionData.data) {
@@ -183,6 +229,15 @@ async function extractAndExecuteAction(text: string, userId: string, mediaUrl?: 
       case 'create_goal':
         result = await createGoal(userId, actionData.data);
         break;
+      case 'update_goal':
+        result = await updateGoal(userId, actionData.data);
+        break;
+      case 'delete_goal':
+        result = await deleteGoal(userId, actionData.data);
+        break;
+      default:
+        console.warn('[Chat] Ação não reconhecida:', actionData.action);
+        return { cleanText };
     }
 
     return { cleanText, actionResult: result };
@@ -299,8 +354,10 @@ async function createGoal(userId: string, data: any) {
       area: data.area || 'Geral',
       timeframe: data.timeframe || 'short',
       deadline: data.deadline || null,
-      completed: false,
+      target_value: data.target_value || null,
+      current_value: data.current_value || 0,
       progress_percentage: 0,
+      completed: false,
     })
     .select()
     .single();
@@ -311,6 +368,81 @@ async function createGoal(userId: string, data: any) {
   }
   console.log('[Chat] Meta criada:', goal);
   return { type: 'goal', data: goal };
+}
+
+async function updateGoal(userId: string, data: any) {
+  if (!data.id) {
+    throw new Error('ID da meta é obrigatório para edição');
+  }
+
+  // Verificar se a meta pertence ao usuário
+  const { data: existingGoal, error: checkError } = await supabase
+    .from('goals')
+    .select('id')
+    .eq('id', data.id)
+    .eq('user_id', userId)
+    .single();
+
+  if (checkError || !existingGoal) {
+    throw new Error('Meta não encontrada ou você não tem permissão para editá-la');
+  }
+
+  // Preparar dados para atualização (remover id dos dados de atualização)
+  const { id, ...updateData } = data;
+
+  // Calcular progress_percentage se target_value e current_value foram fornecidos
+  if (updateData.target_value && updateData.current_value !== undefined) {
+    updateData.progress_percentage = Math.min(
+      100,
+      Math.max(0, Math.round((updateData.current_value / updateData.target_value) * 100))
+    );
+  }
+
+  const { data: goal, error } = await supabase
+    .from('goals')
+    .update(updateData)
+    .eq('id', id)
+    .eq('user_id', userId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[Chat] Erro ao atualizar meta:', error);
+    throw error;
+  }
+  console.log('[Chat] Meta atualizada:', goal);
+  return { type: 'goal', data: goal, action: 'updated' };
+}
+
+async function deleteGoal(userId: string, data: any) {
+  if (!data.id) {
+    throw new Error('ID da meta é obrigatório para exclusão');
+  }
+
+  // Verificar se a meta pertence ao usuário
+  const { data: existingGoal, error: checkError } = await supabase
+    .from('goals')
+    .select('id, title')
+    .eq('id', data.id)
+    .eq('user_id', userId)
+    .single();
+
+  if (checkError || !existingGoal) {
+    throw new Error('Meta não encontrada ou você não tem permissão para excluí-la');
+  }
+
+  const { error } = await supabase
+    .from('goals')
+    .delete()
+    .eq('id', data.id)
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error('[Chat] Erro ao excluir meta:', error);
+    throw error;
+  }
+  console.log('[Chat] Meta excluída:', existingGoal.title);
+  return { type: 'goal', data: { id: data.id, title: existingGoal.title }, action: 'deleted' };
 }
 
 // ============================================
@@ -569,7 +701,8 @@ function formatUserContext(context: any): string {
     context.goals.forEach((goal: any) => {
       const deadline = goal.deadline ? ` - Prazo: ${new Date(goal.deadline).toLocaleDateString('pt-BR')}` : '';
       const progress = goal.progress_percentage || 0;
-      text += `  - ${goal.title} [${progress}%]${deadline}\n`;
+      // IMPORTANTE: Incluir o ID da meta para permitir edição/exclusão
+      text += `  - [ID: ${goal.id}] ${goal.title} [${progress}%]${deadline}\n`;
     });
   }
 

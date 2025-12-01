@@ -50,12 +50,12 @@ export default function DashboardLayout({
         <div className="fixed inset-0 gradient-zed-mesh opacity-15 pointer-events-none" />
 
         {/* ====== MOBILE LAYOUT (< 768px) - APENAS CELULARES ====== */}
-        <div className="md:hidden min-h-screen flex flex-col">
+        <div className="md:hidden min-h-screen flex flex-col safe-area-top">
           {/* Header Mobile - logo centralizada e ações */}
           <MobileHeader />
 
           {/* Conteúdo Mobile - responsivo */}
-          <main className="flex-1 px-3 sm:px-4 py-3 sm:py-4 pb-20 sm:pb-24">
+          <main className="flex-1 px-3 sm:px-4 py-3 sm:py-4 pb-20 sm:pb-24 safe-area-left safe-area-right">
             <div className="max-w-4xl mx-auto">
               {children}
             </div>
